@@ -1,0 +1,6 @@
+{
+  "terminal_options": {
+    "treat_no_relevant_lines_as_covered": true,
+    "print_files": false
+  }
+}

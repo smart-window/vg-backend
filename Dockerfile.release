@@ -1,0 +1,37 @@
+# https://hexdocs.pm/phoenix/releases.html
+# docker build . -f Dockerfile.release -t release-xyz
+# docker run --env CORS_ALLOWED_ORIGINS_REGEX="https?:\/\/localhost:\d*" --env DATABASE_URL=postgresql://user:password@localhost/db --env SECRET_KEY_BASE=xyz -it release-xyz
+
+FROM elixir:1.11.3-alpine AS build
+
+WORKDIR /app
+
+RUN mix local.hex --force && \
+  mix local.rebar --force
+
+ENV MIX_ENV=prod
+COPY mix.exs mix.lock ./
+COPY config config
+RUN mix do deps.get, deps.compile
+
+COPY priv priv
+
+COPY lib lib
+COPY api_runner.sh ./
+RUN mix do compile, release
+
+FROM alpine:3.12 AS app
+ENV MIX_ENV=prod
+RUN apk add --no-cache openssl ncurses-libs
+
+WORKDIR /app
+
+RUN chown nobody:nobody /app
+
+USER nobody:nobody
+
+COPY --from=build --chown=nobody:nobody /app/_build/prod/rel/velocity ./
+COPY --from=build --chown=nobody:nobody /app/api_runner.sh ./
+ENV HOME=/app
+
+CMD ["./api_runner.sh"]

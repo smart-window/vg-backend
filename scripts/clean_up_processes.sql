@@ -1,0 +1,20 @@
+delete from task_assignments;
+delete from forms where task_id is not null;
+delete from dependent_tasks;
+delete from tasks;
+delete from process_services;
+delete from process_role_users;
+delete from stages;
+delete from client_onboardings;
+delete from employee_onboardings;
+delete from processes;
+
+delete from task_template_roles;
+delete from task_template_role_notifications;
+delete from dependent_task_templates;
+delete from task_templates;
+delete from stage_template_knowledge_articles;
+delete from stage_templates;
+delete from process_template_knowledge_articles;
+delete from process_templates;
+delete from services;

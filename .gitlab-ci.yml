@@ -1,0 +1,120 @@
+include:
+  - template: Security/SAST.gitlab-ci.yml
+
+stages:
+  - build
+  - lint
+  - test
+  - deploy
+
+image: elixir:1.10.4-alpine
+
+cache:
+  paths:
+    - _build
+    - deps
+
+build:
+  stage: build
+  before_script:
+    - mix local.hex --force
+    - mix local.rebar --force
+  script:
+    - mix deps.get
+    - mix compile --warnings-as-errors
+
+build-docker:
+  stage: build
+  image: docker:latest
+  environment:
+    name: $CI_COMMIT_REF_NAME
+  only:
+    - dev
+    - qa
+    - prod
+  variables:
+    GLIBC_VER: 2.32-r0
+  services:
+    - docker:dind
+  before_script:
+    - apk --no-cache add curl binutils
+    - curl -sL https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub -o /etc/apk/keys/sgerrand.rsa.pub
+    - curl -sLO https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VER}/glibc-${GLIBC_VER}.apk
+    - curl -sLO https://github.com/sgerrand/alpine-pkg-glibc/releases/download/${GLIBC_VER}/glibc-bin-${GLIBC_VER}.apk
+    - curl -sL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+    - apk --no-cache add glibc-${GLIBC_VER}.apk glibc-bin-${GLIBC_VER}.apk
+    - unzip awscliv2.zip
+    - aws/install
+    - rm -rf awscliv2.zip aws /usr/local/aws-cli/v2/*/dist/awscli/examples
+    - rm glibc-${GLIBC_VER}.apk
+    - rm glibc-bin-${GLIBC_VER}.apk
+    - rm -rf /var/cache/apk/*
+  script:
+    - aws ecr get-login-password | docker login  --username AWS --password-stdin $AWS_ECR_BASE
+    - docker build -t $AWS_ECR_BASE/velocity-global/velocity-api:$CI_COMMIT_REF_NAME-latest -f Dockerfile.release .
+    - docker tag $AWS_ECR_BASE/velocity-global/velocity-api:$CI_COMMIT_REF_NAME-latest $AWS_ECR_BASE/velocity-global/velocity-api:$CI_COMMIT_REF_NAME-$CI_COMMIT_SHA
+    - MANIFEST=$(aws ecr batch-get-image --repository-name velocity-global/velocity-api --image-ids imageTag=$CI_COMMIT_REF_NAME-latest --query 'images[].imageManifest' --output text); aws ecr put-image --repository-name velocity-global/velocity-api --image-tag $CI_COMMIT_REF_NAME-previous --image-manifest "$MANIFEST" || true
+    - docker push $AWS_ECR_BASE/velocity-global/velocity-api:$CI_COMMIT_REF_NAME-latest
+    - docker push $AWS_ECR_BASE/velocity-global/velocity-api:$CI_COMMIT_REF_NAME-$CI_COMMIT_SHA
+
+lint:
+  stage: lint
+  needs: ['build']
+  before_script:
+    - mix local.hex --force
+    - mix local.rebar --force
+  script:
+    - mix format --check-formatted
+    - mix credo --strict
+
+test:
+  stage: test
+  services:
+    - postgres:12.4-alpine
+    - redis:latest
+  variables:
+    POSTGRES_DB: velocity_test
+    POSTGRES_HOST: postgres
+    POSTGRES_HOST_AUTH_METHOD: trust
+    POSTGRES_PORT: 5432
+    POSTGRES_USER: postgres
+    POSTGRES_PASSWORD: postgres
+    MIX_ENV: test
+    REDIS_URL: redis://redis:6379
+  needs: ['lint']
+  before_script:
+    - mix local.hex --force
+    - mix local.rebar --force
+  script:
+    - mix ecto.create
+    - mix ecto.migrate
+    - mix test
+
+run_migrations:
+  stage: deploy
+  environment:
+    name: $CI_COMMIT_REF_NAME
+  only:
+    refs:
+      - dev
+      - qa
+      - prod
+    changes:
+      - priv/repo/migrations/*
+  image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+  needs: ['test', 'build-docker']
+  script:
+    - aws ecs run-task --cluster velocity-api --task-definition velocity-api --count 1 --launch-type FARGATE --network-configuration file://cicd/vpc_config.json.$CI_COMMIT_REF_NAME --overrides file://cicd/migration_runner.json
+
+deploy_aws:
+  stage: deploy
+  environment:
+    name: $CI_COMMIT_REF_NAME
+  only:
+    - dev
+    - qa
+    - prod
+  image: registry.gitlab.com/gitlab-org/cloud-deploy/aws-base:latest
+  needs: ['test', 'build-docker']
+  script:
+    - aws ecs update-service --cluster velocity-api --service velocity-api --force-new-deployment

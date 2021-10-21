@@ -1,0 +1,40 @@
+version: '3'
+
+services:
+  web:
+    build:
+      context: .
+    environment:
+      MIX_ENV: dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: db
+      REDIS_URL: 'redis://redis:6379'
+    ports:
+      - '4000:4000'
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:12.4-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data/pgdata
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+
+  redis:
+    image: redis:6.0-alpine
+    ports:
+      - '6379:6379'
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,8 @@
+{
+  "containerOverrides": [
+    {
+      "name": "velocity-api",
+      "command": ["bin/velocity","eval","Velocity.Release.sync_okta_users"]
+    }
+  ]
+}
